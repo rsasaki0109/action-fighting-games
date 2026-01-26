@@ -14,7 +14,11 @@ const CHARACTERS = {
         damage: 10,
         knockback: 0.8,
         special: 'instantKO', // 30%で即死
-        image: 'doge'
+        doubleJump: true, // 二段ジャンプ
+        attackCooldown: 80, // 攻撃硬直短め（通常100）
+        attackRange: 70,
+        image: 'doge',
+        description: '高速移動・二段ジャンプ'
     },
     trollface: {
         name: 'Trollface',
@@ -23,7 +27,49 @@ const CHARACTERS = {
         damage: 20,
         knockback: 1.5,
         special: 'reverseControl', // 操作反転0.5秒
-        image: 'trollface'
+        superArmor: true, // 攻撃中ノックバック無効
+        attackCooldown: 120,
+        attackRange: 90, // 攻撃範囲広め
+        image: 'trollface',
+        description: '高火力・スーパーアーマー'
+    },
+    pepe: {
+        name: 'Pepe',
+        color: 0x3cb371,
+        speed: 0.9,
+        damage: 12,
+        knockback: 0.6,
+        special: 'rangedAttack', // 遠距離攻撃（涙を飛ばす）
+        attackCooldown: 150,
+        attackRange: 200, // 遠距離
+        image: 'pepe',
+        description: '遠距離攻撃（涙弾）'
+    },
+    wojak: {
+        name: 'Wojak',
+        color: 0xf5deb3,
+        speed: 1.0,
+        damage: 15,
+        knockback: 1.2,
+        special: 'counter', // カウンター技
+        attackCooldown: 100,
+        attackRange: 70,
+        image: 'wojak',
+        description: 'カウンター技持ち'
+    },
+    nyancat: {
+        name: 'Nyan Cat',
+        color: 0xff69b4,
+        speed: 1.1,
+        damage: 8,
+        knockback: 0.5,
+        special: 'airMobility', // 空中機動力UP
+        doubleJump: true,
+        tripleJump: true, // 三段ジャンプ！
+        attackCooldown: 90,
+        attackRange: 70,
+        image: 'nyancat',
+        description: '空中機動力UP・三段ジャンプ'
     }
 };
 
@@ -35,6 +81,29 @@ const GROUND_Y = GAME_HEIGHT - 80;
 const RESPAWN_INVINCIBLE_TIME = 1000;
 const REVERSE_CONTROL_TIME = 500;
 const STOCKS = 3;
+
+// CPU難易度設定
+const CPU_DIFFICULTY = {
+    easy: {
+        reactionTime: 800,
+        accuracy: 0.5,
+        aggressiveness: 0.3
+    },
+    normal: {
+        reactionTime: 400,
+        accuracy: 0.7,
+        aggressiveness: 0.5
+    },
+    hard: {
+        reactionTime: 200,
+        accuracy: 0.9,
+        aggressiveness: 0.7
+    }
+};
+
+// ゲームモード
+let gameMode = '2p'; // '1p' or '2p'
+let cpuDifficulty = 'normal';
 
 // プリロードシーン（共通アセット読み込み）
 class PreloadScene extends Phaser.Scene {
@@ -52,6 +121,9 @@ class PreloadScene extends Phaser.Scene {
         // キャラ画像読み込み
         this.load.image('doge', 'assets/characters/doge.png');
         this.load.image('trollface', 'assets/characters/trollface.png');
+        this.load.svg('pepe', 'assets/characters/pepe.svg', { width: 100, height: 100 });
+        this.load.svg('wojak', 'assets/characters/wojak.svg', { width: 100, height: 100 });
+        this.load.svg('nyancat', 'assets/characters/nyancat.svg', { width: 100, height: 100 });
     }
 
     create() {
@@ -79,11 +151,13 @@ class TitleScene extends Phaser.Scene {
             strokeThickness: 6
         }).setOrigin(0.5);
 
-        // キャラプレビュー
-        const dogePreview = this.add.image(GAME_WIDTH / 3, GAME_HEIGHT / 2 + 20, 'doge')
-            .setDisplaySize(80, 80);
-        const trollPreview = this.add.image(GAME_WIDTH * 2 / 3, GAME_HEIGHT / 2 + 20, 'trollface')
-            .setDisplaySize(80, 80);
+        // キャラプレビュー（全キャラ表示）
+        const charKeys = Object.keys(CHARACTERS);
+        const spacing = GAME_WIDTH / (charKeys.length + 1);
+        charKeys.forEach((key, i) => {
+            this.add.image(spacing * (i + 1), GAME_HEIGHT / 2 + 20, key)
+                .setDisplaySize(50, 50);
+        });
 
         // TAP TO START（点滅）
         const startText = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT * 0.8, 'TAP TO START', {
@@ -102,7 +176,98 @@ class TitleScene extends Phaser.Scene {
 
         // タップで次へ
         this.input.on('pointerdown', () => {
+            this.scene.start('ModeSelectScene');
+        });
+    }
+}
+
+// モード選択シーン
+class ModeSelectScene extends Phaser.Scene {
+    constructor() {
+        super({ key: 'ModeSelectScene' });
+    }
+
+    create() {
+        this.cameras.main.setBackgroundColor('#16213e');
+
+        // タイトル
+        this.add.text(GAME_WIDTH / 2, 60, 'SELECT MODE', {
+            fontSize: '36px',
+            fontFamily: 'Impact, Arial Black, sans-serif',
+            color: '#e94560',
+            stroke: '#000',
+            strokeThickness: 4
+        }).setOrigin(0.5);
+
+        // 1P vs CPU ボタン
+        this.createModeButton(GAME_WIDTH / 2, 160, '1P vs CPU', '1p', 0x4ecdc4);
+
+        // 2P対戦 ボタン
+        this.createModeButton(GAME_WIDTH / 2, 250, '2P VS 2P', '2p', 0xff6b6b);
+
+        // 難易度選択（1Pモード用）
+        this.add.text(GAME_WIDTH / 2, 320, 'CPU DIFFICULTY', {
+            fontSize: '20px',
+            color: '#888888'
+        }).setOrigin(0.5);
+
+        this.difficultyButtons = {};
+        this.createDifficultyButton(GAME_WIDTH / 2 - 120, 370, 'EASY', 'easy');
+        this.createDifficultyButton(GAME_WIDTH / 2, 370, 'NORMAL', 'normal');
+        this.createDifficultyButton(GAME_WIDTH / 2 + 120, 370, 'HARD', 'hard');
+
+        // デフォルト選択
+        this.updateDifficultySelection();
+    }
+
+    createModeButton(x, y, text, mode, color) {
+        const btn = this.add.rectangle(x, y, 250, 60, 0x333333)
+            .setStrokeStyle(3, color)
+            .setInteractive();
+
+        this.add.text(x, y, text, {
+            fontSize: '28px',
+            fontFamily: 'Impact, Arial Black, sans-serif',
+            color: '#ffffff'
+        }).setOrigin(0.5);
+
+        btn.on('pointerdown', () => {
+            gameMode = mode;
             this.scene.start('SelectScene');
+        });
+
+        btn.on('pointerover', () => btn.setFillStyle(0x444444));
+        btn.on('pointerout', () => btn.setFillStyle(0x333333));
+    }
+
+    createDifficultyButton(x, y, text, difficulty) {
+        const btn = this.add.rectangle(x, y, 100, 40, 0x333333)
+            .setStrokeStyle(2, 0x555555)
+            .setInteractive();
+
+        const label = this.add.text(x, y, text, {
+            fontSize: '16px',
+            color: '#ffffff'
+        }).setOrigin(0.5);
+
+        this.difficultyButtons[difficulty] = { btn, label };
+
+        btn.on('pointerdown', () => {
+            cpuDifficulty = difficulty;
+            this.updateDifficultySelection();
+        });
+    }
+
+    updateDifficultySelection() {
+        Object.keys(this.difficultyButtons).forEach(diff => {
+            const { btn, label } = this.difficultyButtons[diff];
+            if (diff === cpuDifficulty) {
+                btn.setStrokeStyle(3, 0x4ecdc4);
+                label.setColor('#4ecdc4');
+            } else {
+                btn.setStrokeStyle(2, 0x555555);
+                label.setColor('#ffffff');
+            }
         });
     }
 }
@@ -120,8 +285,8 @@ class SelectScene extends Phaser.Scene {
         this.p2Buttons = {};
 
         // タイトル
-        this.add.text(GAME_WIDTH / 2, 40, 'SELECT YOUR MEME', {
-            fontSize: '32px',
+        this.add.text(GAME_WIDTH / 2, 30, 'SELECT YOUR MEME', {
+            fontSize: '28px',
             fontFamily: 'Impact, Arial Black, sans-serif',
             color: '#e94560',
             stroke: '#000',
@@ -131,36 +296,49 @@ class SelectScene extends Phaser.Scene {
         // 分割線
         const graphics = this.add.graphics();
         graphics.lineStyle(2, 0x444444);
-        graphics.lineBetween(GAME_WIDTH / 2, 80, GAME_WIDTH / 2, GAME_HEIGHT - 40);
+        graphics.lineBetween(GAME_WIDTH / 2, 60, GAME_WIDTH / 2, GAME_HEIGHT - 30);
 
         // P1側
-        this.add.text(GAME_WIDTH / 4, 80, 'PLAYER 1', {
-            fontSize: '24px',
+        this.add.text(GAME_WIDTH / 4, 60, 'PLAYER 1', {
+            fontSize: '20px',
             color: '#4ecdc4'
         }).setOrigin(0.5);
 
-        // P2側
-        this.add.text(GAME_WIDTH * 3 / 4, 80, 'PLAYER 2', {
-            fontSize: '24px',
+        // P2側（CPUモードの場合はCPU表示）
+        const p2Label = gameMode === '1p' ? 'CPU' : 'PLAYER 2';
+        this.add.text(GAME_WIDTH * 3 / 4, 60, p2Label, {
+            fontSize: '20px',
             color: '#ff6b6b'
         }).setOrigin(0.5);
 
         // キャラボタン作成
-        this.createCharButton('doge', GAME_WIDTH / 4, 160, 1);
-        this.createCharButton('trollface', GAME_WIDTH / 4, 280, 1);
-        this.createCharButton('doge', GAME_WIDTH * 3 / 4, 160, 2);
-        this.createCharButton('trollface', GAME_WIDTH * 3 / 4, 280, 2);
+        const charKeys = Object.keys(CHARACTERS);
+        const startY = 100;
+        const spacing = 70;
+
+        charKeys.forEach((key, i) => {
+            this.createCharButton(key, GAME_WIDTH / 4, startY + i * spacing, 1);
+            this.createCharButton(key, GAME_WIDTH * 3 / 4, startY + i * spacing, 2);
+        });
 
         // 選択表示テキスト
-        this.p1SelectText = this.add.text(GAME_WIDTH / 4, GAME_HEIGHT - 50, '選択: ???', {
-            fontSize: '20px',
+        this.p1SelectText = this.add.text(GAME_WIDTH / 4, GAME_HEIGHT - 20, '選択: ???', {
+            fontSize: '16px',
             color: '#4ecdc4'
         }).setOrigin(0.5);
 
-        this.p2SelectText = this.add.text(GAME_WIDTH * 3 / 4, GAME_HEIGHT - 50, '選択: ???', {
-            fontSize: '20px',
+        this.p2SelectText = this.add.text(GAME_WIDTH * 3 / 4, GAME_HEIGHT - 20, '選択: ???', {
+            fontSize: '16px',
             color: '#ff6b6b'
         }).setOrigin(0.5);
+
+        // CPUモードの場合、P2をランダム選択
+        if (gameMode === '1p') {
+            const randomChar = charKeys[Math.floor(Math.random() * charKeys.length)];
+            this.time.delayedCall(500, () => {
+                this.selectChar(randomChar, 2, this.p2Buttons[randomChar], 0xff6b6b);
+            });
+        }
     }
 
     createCharButton(charKey, x, y, player) {
@@ -168,22 +346,26 @@ class SelectScene extends Phaser.Scene {
         const playerColor = player === 1 ? 0x4ecdc4 : 0xff6b6b;
 
         // ボタン背景
-        const bg = this.add.rectangle(x, y, 140, 80, 0x333333)
-            .setStrokeStyle(3, 0x555555)
+        const bg = this.add.rectangle(x, y, 160, 55, 0x333333)
+            .setStrokeStyle(2, 0x555555)
             .setInteractive();
 
         // キャラ画像
-        const charImage = this.add.image(x - 35, y, charKey)
-            .setDisplaySize(50, 50);
+        this.add.image(x - 55, y, charKey)
+            .setDisplaySize(40, 40);
 
-        // キャラ名
-        const text = this.add.text(x + 20, y, char.name, {
-            fontSize: '18px',
+        // キャラ名と説明
+        this.add.text(x + 5, y - 10, char.name, {
+            fontSize: '14px',
             color: '#ffffff'
         }).setOrigin(0, 0.5);
 
+        this.add.text(x + 5, y + 10, char.description, {
+            fontSize: '10px',
+            color: '#888888'
+        }).setOrigin(0, 0.5);
+
         // ボタン参照を保存
-        const buttonKey = `${player}_${charKey}`;
         if (player === 1) {
             this.p1Buttons[charKey] = bg;
         } else {
@@ -202,11 +384,11 @@ class SelectScene extends Phaser.Scene {
 
         // 全ボタンのスタイルリセット
         Object.values(buttons).forEach(btn => {
-            btn.setStrokeStyle(3, 0x555555);
+            btn.setStrokeStyle(2, 0x555555);
         });
 
         // 選択したボタンをハイライト
-        button.setStrokeStyle(4, playerColor);
+        button.setStrokeStyle(3, playerColor);
 
         if (player === 1) {
             this.selectedChars.p1 = charKey;
@@ -230,7 +412,8 @@ class SelectScene extends Phaser.Scene {
             this.time.delayedCall(500, () => {
                 this.scene.start('BattleScene', {
                     p1Char: this.selectedChars.p1,
-                    p2Char: this.selectedChars.p2
+                    p2Char: this.selectedChars.p2,
+                    isCpuMode: gameMode === '1p'
                 });
             });
         }
@@ -246,6 +429,7 @@ class BattleScene extends Phaser.Scene {
     init(data) {
         this.p1Char = data.p1Char || 'doge';
         this.p2Char = data.p2Char || 'trollface';
+        this.isCpuMode = data.isCpuMode || false;
     }
 
     create() {
@@ -263,11 +447,22 @@ class BattleScene extends Phaser.Scene {
         this.physics.add.collider(this.player1.sprite, this.floor);
         this.physics.add.collider(this.player2.sprite, this.floor);
 
+        // 飛び道具グループ
+        this.projectiles = this.add.group();
+
         // UI作成
         this.createUI();
 
         // 操作ボタン作成
         this.createControls();
+
+        // CPU AI初期化
+        if (this.isCpuMode) {
+            this.cpuAI = {
+                lastActionTime: 0,
+                difficulty: CPU_DIFFICULTY[cpuDifficulty]
+            };
+        }
 
         // 更新処理
         this.gameOver = false;
@@ -294,14 +489,21 @@ class BattleScene extends Phaser.Scene {
             .setStrokeStyle(3, playerColor)
             .setFillStyle(0x000000, 0);
 
-        // P番号ラベル
-        const label = this.add.text(x, GROUND_Y - 80, `P${num}`, {
+        // P番号ラベル（CPUモードの場合はCPU表示）
+        const labelText = (num === 2 && this.isCpuMode) ? 'CPU' : `P${num}`;
+        const label = this.add.text(x, GROUND_Y - 80, labelText, {
             fontSize: '14px',
             fontFamily: 'Arial Black, sans-serif',
             color: num === 1 ? '#4ecdc4' : '#ff6b6b',
             stroke: '#000',
             strokeThickness: 2
         }).setOrigin(0.5);
+
+        // Nyan Cat用虹エフェクト
+        let rainbowTrail = null;
+        if (charKey === 'nyancat') {
+            rainbowTrail = [];
+        }
 
         return {
             num,
@@ -315,7 +517,12 @@ class BattleScene extends Phaser.Scene {
             invincible: false,
             reverseControl: false,
             isAttacking: false,
-            facingRight: num === 1
+            facingRight: num === 1,
+            jumpCount: 0,
+            maxJumps: charData.tripleJump ? 3 : (charData.doubleJump ? 2 : 1),
+            isCountering: false,
+            counterTimer: null,
+            rainbowTrail
         };
     }
 
@@ -337,6 +544,14 @@ class BattleScene extends Phaser.Scene {
         });
         this.p2StocksContainer = this.add.container(GAME_WIDTH - 100, GAME_HEIGHT - 30);
         this.updateStockDisplay(2);
+
+        // モード表示
+        if (this.isCpuMode) {
+            this.add.text(GAME_WIDTH / 2, 15, `VS CPU (${cpuDifficulty.toUpperCase()})`, {
+                fontSize: '16px',
+                color: '#888888'
+            }).setOrigin(0.5);
+        }
     }
 
     updateStockDisplay(playerNum) {
@@ -360,11 +575,13 @@ class BattleScene extends Phaser.Scene {
         this.createButton(170, GAME_HEIGHT - 160, '→', () => this.movePlayer(1, 1));
         this.createButton(100, GAME_HEIGHT - 160, 'ATK', () => this.attackPlayer(1), 0xe94560);
 
-        // P2操作（画面右側）
-        this.createButton(GAME_WIDTH - 230, GAME_HEIGHT - 160, '←', () => this.movePlayer(2, -1));
-        this.createButton(GAME_WIDTH - 160, GAME_HEIGHT - 200, '↑', () => this.jumpPlayer(2));
-        this.createButton(GAME_WIDTH - 90, GAME_HEIGHT - 160, '→', () => this.movePlayer(2, 1));
-        this.createButton(GAME_WIDTH - 160, GAME_HEIGHT - 160, 'ATK', () => this.attackPlayer(2), 0xe94560);
+        // P2操作（CPUモードでない場合のみ）
+        if (!this.isCpuMode) {
+            this.createButton(GAME_WIDTH - 230, GAME_HEIGHT - 160, '←', () => this.movePlayer(2, -1));
+            this.createButton(GAME_WIDTH - 160, GAME_HEIGHT - 200, '↑', () => this.jumpPlayer(2));
+            this.createButton(GAME_WIDTH - 90, GAME_HEIGHT - 160, '→', () => this.movePlayer(2, 1));
+            this.createButton(GAME_WIDTH - 160, GAME_HEIGHT - 160, 'ATK', () => this.attackPlayer(2), 0xe94560);
+        }
     }
 
     createButton(x, y, text, callback, color = 0x333333) {
@@ -409,11 +626,40 @@ class BattleScene extends Phaser.Scene {
         const player = playerNum === 1 ? this.player1 : this.player2;
         if (this.gameOver) return;
 
-        // 地面にいる時のみジャンプ
+        // 地面判定でジャンプカウントリセット
         if (player.sprite.body.blocked.down || player.sprite.y >= GROUND_Y - 40) {
-            const jumpDir = player.reverseControl ? -JUMP_VELOCITY : JUMP_VELOCITY;
-            player.sprite.body.setVelocityY(jumpDir);
+            player.jumpCount = 0;
         }
+
+        // ジャンプ可能判定
+        if (player.jumpCount < player.maxJumps) {
+            const jumpDir = player.reverseControl ? -JUMP_VELOCITY : JUMP_VELOCITY;
+
+            // Nyan Cat: 空中ジャンプ時にもフルジャンプ力
+            const jumpPower = (player.charKey === 'nyancat' && player.jumpCount > 0)
+                ? jumpDir * 0.9
+                : jumpDir;
+
+            player.sprite.body.setVelocityY(jumpPower);
+            player.jumpCount++;
+
+            // 二段以上のジャンプ時にエフェクト
+            if (player.jumpCount > 1) {
+                this.showJumpEffect(player);
+            }
+        }
+    }
+
+    showJumpEffect(player) {
+        const effectColor = player.charKey === 'nyancat' ? 0xff69b4 : 0xffffff;
+        const effect = this.add.circle(player.sprite.x, player.sprite.y + 20, 15, effectColor, 0.5);
+        this.tweens.add({
+            targets: effect,
+            scale: 2,
+            alpha: 0,
+            duration: 300,
+            onComplete: () => effect.destroy()
+        });
     }
 
     attackPlayer(playerNum) {
@@ -421,14 +667,32 @@ class BattleScene extends Phaser.Scene {
         const defender = playerNum === 1 ? this.player2 : this.player1;
         if (this.gameOver || attacker.isAttacking) return;
 
+        // Wojakのカウンター技
+        if (attacker.charKey === 'wojak' && !attacker.isCountering) {
+            this.activateCounter(attacker);
+            return;
+        }
+
         attacker.isAttacking = true;
+
+        // Pepeの遠距離攻撃
+        if (attacker.charKey === 'pepe') {
+            this.fireProjectile(attacker);
+            this.time.delayedCall(attacker.charData.attackCooldown, () => {
+                attacker.isAttacking = false;
+            });
+            return;
+        }
 
         // 攻撃エフェクト
         const attackDir = attacker.facingRight ? 1 : -1;
         const attackX = attacker.sprite.x + (attackDir * 40);
-        const attackHitbox = this.add.rectangle(attackX, attacker.sprite.y, 40, 50, 0xff0000, 0.5);
+        const attackWidth = attacker.charData.attackRange === 90 ? 50 : 40; // Trollfaceは広め
+        const attackHitbox = this.add.rectangle(attackX, attacker.sprite.y, attackWidth, 50, 0xff0000, 0.5);
 
-        this.time.delayedCall(100, () => {
+        // 攻撃硬直
+        const cooldown = attacker.charData.attackCooldown || 100;
+        this.time.delayedCall(cooldown, () => {
             attackHitbox.destroy();
             attacker.isAttacking = false;
         });
@@ -436,14 +700,99 @@ class BattleScene extends Phaser.Scene {
         // 当たり判定
         const dx = Math.abs(attacker.sprite.x - defender.sprite.x);
         const dy = Math.abs(attacker.sprite.y - defender.sprite.y);
-        const inRange = dx < 70 && dy < 50;
+        const range = attacker.charData.attackRange || 70;
+        const inRange = dx < range && dy < 50;
 
         if (inRange && !defender.invincible) {
-            this.applyHit(attacker, defender);
+            // Wojakのカウンター判定
+            if (defender.isCountering) {
+                this.triggerCounter(defender, attacker);
+            } else {
+                this.applyHit(attacker, defender);
+            }
         }
     }
 
+    activateCounter(player) {
+        player.isCountering = true;
+        player.isAttacking = true;
+
+        // カウンター構え表示
+        this.showText('COUNTER!', player.sprite.x, player.sprite.y - 50, '#f5deb3');
+
+        // 構えエフェクト
+        const counterEffect = this.add.rectangle(player.sprite.x, player.sprite.y, 70, 70)
+            .setStrokeStyle(3, 0xf5deb3)
+            .setFillStyle(0xf5deb3, 0.2);
+
+        // カウンター時間終了
+        player.counterTimer = this.time.delayedCall(400, () => {
+            player.isCountering = false;
+            player.isAttacking = false;
+            counterEffect.destroy();
+        });
+    }
+
+    triggerCounter(defender, attacker) {
+        // カウンター成功！
+        this.showText('FEEL IT!', defender.sprite.x, defender.sprite.y - 50, '#ffff00');
+
+        // カウンターダメージ（1.5倍）
+        const counterDamage = defender.charData.damage * 1.5;
+        attacker.damage += counterDamage;
+
+        // ダメージ表示更新
+        if (attacker.num === 1) {
+            this.p1DamageText.setText(`${Math.floor(attacker.damage)}%`);
+        } else {
+            this.p2DamageText.setText(`${Math.floor(attacker.damage)}%`);
+        }
+
+        // 強めのノックバック
+        const knockbackDir = defender.sprite.x < attacker.sprite.x ? 1 : -1;
+        attacker.sprite.body.setVelocity(knockbackDir * 500, -400);
+
+        // カウンター終了
+        if (defender.counterTimer) {
+            defender.counterTimer.remove();
+        }
+        defender.isCountering = false;
+        defender.isAttacking = false;
+
+        this.cameras.main.shake(150, 0.02);
+    }
+
+    fireProjectile(attacker) {
+        const dir = attacker.facingRight ? 1 : -1;
+
+        // 涙弾（Pepe専用）
+        const tear = this.add.ellipse(
+            attacker.sprite.x + dir * 30,
+            attacker.sprite.y,
+            15, 20,
+            0x00bfff, 0.8
+        );
+        this.physics.add.existing(tear);
+        tear.body.setVelocityX(dir * 400);
+        tear.body.setAllowGravity(false);
+
+        tear.attackerNum = attacker.num;
+        tear.damage = attacker.charData.damage;
+
+        this.projectiles.add(tear);
+
+        // 一定時間で消滅
+        this.time.delayedCall(1500, () => {
+            if (tear.active) tear.destroy();
+        });
+
+        this.showText('*sob*', attacker.sprite.x, attacker.sprite.y - 30, '#00bfff');
+    }
+
     applyHit(attacker, defender) {
+        // スーパーアーマー判定（Trollfaceが攻撃中の場合）
+        const hasArmor = attacker.charData.superArmor && attacker.isAttacking;
+
         const damage = attacker.charData.damage;
         defender.damage += damage;
 
@@ -472,12 +821,15 @@ class BattleScene extends Phaser.Scene {
             });
         }
 
-        // ノックバック適用
-        const knockbackDir = attacker.sprite.x < defender.sprite.x ? 1 : -1;
-        const knockbackX = knockbackDir * knockbackPower * 400;
-        const knockbackY = -knockbackPower * 300;
-
-        defender.sprite.body.setVelocity(knockbackX, knockbackY);
+        // ノックバック適用（スーパーアーマー時は無効にしない - 防御側のアーマー判定）
+        if (!(defender.charData.superArmor && defender.isAttacking)) {
+            const knockbackDir = attacker.sprite.x < defender.sprite.x ? 1 : -1;
+            const knockbackX = knockbackDir * knockbackPower * 400;
+            const knockbackY = -knockbackPower * 300;
+            defender.sprite.body.setVelocity(knockbackX, knockbackY);
+        } else {
+            this.showText('ARMOR!', defender.sprite.x, defender.sprite.y - 70, '#ffffff');
+        }
 
         // ヒットエフェクト
         this.cameras.main.shake(100, 0.01);
@@ -511,8 +863,127 @@ class BattleScene extends Phaser.Scene {
         });
     }
 
+    updateCpuAI() {
+        if (!this.isCpuMode || this.gameOver) return;
+
+        const cpu = this.player2;
+        const player = this.player1;
+        const ai = this.cpuAI;
+        const now = this.time.now;
+
+        // 反応時間チェック
+        if (now - ai.lastActionTime < ai.difficulty.reactionTime) return;
+        ai.lastActionTime = now;
+
+        // 判断精度（ランダム要素）
+        if (Math.random() > ai.difficulty.accuracy) return;
+
+        const dx = player.sprite.x - cpu.sprite.x;
+        const dy = player.sprite.y - cpu.sprite.y;
+        const distance = Math.abs(dx);
+
+        // 攻撃判定
+        const attackRange = cpu.charData.attackRange || 70;
+        if (distance < attackRange && Math.abs(dy) < 50) {
+            if (Math.random() < ai.difficulty.aggressiveness) {
+                this.attackPlayer(2);
+            }
+        }
+
+        // 移動判定
+        if (distance > 50) {
+            const moveDir = dx > 0 ? 1 : -1;
+            this.movePlayer(2, moveDir);
+        }
+
+        // ジャンプ判定（プレイヤーが上にいる場合、または距離がある場合）
+        if (dy < -50 || (distance > 200 && Math.random() < 0.3)) {
+            this.jumpPlayer(2);
+        }
+
+        // 遠距離キャラ（Pepe）の場合は距離を保つ
+        if (cpu.charKey === 'pepe' && distance < 150) {
+            const retreatDir = dx > 0 ? -1 : 1;
+            this.movePlayer(2, retreatDir);
+        }
+    }
+
+    updateProjectiles() {
+        this.projectiles.getChildren().forEach(proj => {
+            if (!proj.active) return;
+
+            const target = proj.attackerNum === 1 ? this.player2 : this.player1;
+            const dx = Math.abs(proj.x - target.sprite.x);
+            const dy = Math.abs(proj.y - target.sprite.y);
+
+            if (dx < 40 && dy < 40 && !target.invincible) {
+                // ヒット処理
+                target.damage += proj.damage;
+                if (target.num === 1) {
+                    this.p1DamageText.setText(`${target.damage}%`);
+                } else {
+                    this.p2DamageText.setText(`${target.damage}%`);
+                }
+
+                // ノックバック
+                const knockbackDir = proj.body.velocity.x > 0 ? 1 : -1;
+                target.sprite.body.setVelocity(knockbackDir * 200, -150);
+
+                this.showText('*splash*', target.sprite.x, target.sprite.y - 30, '#00bfff');
+                this.cameras.main.shake(80, 0.008);
+
+                proj.destroy();
+            }
+
+            // 画面外で削除
+            if (proj.x < -50 || proj.x > GAME_WIDTH + 50) {
+                proj.destroy();
+            }
+        });
+    }
+
+    updateNyanCatRainbow() {
+        // Nyan Catの虹エフェクト
+        [this.player1, this.player2].forEach(player => {
+            if (player.charKey !== 'nyancat' || !player.rainbowTrail) return;
+
+            // 虹の軌跡を追加
+            const colors = [0xff0000, 0xff7f00, 0xffff00, 0x00ff00, 0x0000ff, 0x4b0082];
+            const trailPart = this.add.rectangle(
+                player.sprite.x - 20,
+                player.sprite.y,
+                8, 40,
+                colors[Math.floor(Math.random() * colors.length)],
+                0.6
+            );
+
+            player.rainbowTrail.push(trailPart);
+
+            // 古い軌跡を削除
+            this.tweens.add({
+                targets: trailPart,
+                alpha: 0,
+                duration: 300,
+                onComplete: () => {
+                    trailPart.destroy();
+                    const idx = player.rainbowTrail.indexOf(trailPart);
+                    if (idx > -1) player.rainbowTrail.splice(idx, 1);
+                }
+            });
+        });
+    }
+
     update() {
         if (this.gameOver) return;
+
+        // CPU AI更新
+        this.updateCpuAI();
+
+        // 飛び道具更新
+        this.updateProjectiles();
+
+        // Nyan Cat虹エフェクト
+        this.updateNyanCatRainbow();
 
         // ラベル・枠線位置更新
         this.player1.label.setPosition(this.player1.sprite.x, this.player1.sprite.y - 45);
@@ -549,7 +1020,11 @@ class BattleScene extends Phaser.Scene {
             const winnerChar = winner === 1 ? this.p1Char : this.p2Char;
             this.gameOver = true;
             this.time.delayedCall(1000, () => {
-                this.scene.start('VictoryScene', { winner, winnerChar });
+                this.scene.start('VictoryScene', {
+                    winner,
+                    winnerChar,
+                    isCpuMode: this.isCpuMode
+                });
             });
         } else {
             // リスポーン
@@ -564,6 +1039,7 @@ class BattleScene extends Phaser.Scene {
         player.sprite.body.setVelocity(0, 0);
         player.invincible = true;
         player.reverseControl = false;
+        player.jumpCount = 0;
 
         // ダメージ表示リセット
         if (player.num === 1) {
@@ -598,6 +1074,7 @@ class VictoryScene extends Phaser.Scene {
     init(data) {
         this.winner = data.winner || 1;
         this.winnerChar = data.winnerChar || 'doge';
+        this.isCpuMode = data.isCpuMode || false;
     }
 
     create() {
@@ -605,7 +1082,12 @@ class VictoryScene extends Phaser.Scene {
 
         // 勝者テキスト
         const winnerColor = this.winner === 1 ? '#4ecdc4' : '#ff6b6b';
-        this.add.text(GAME_WIDTH / 2, 80, `PLAYER ${this.winner} WINS!`, {
+        let winText = `PLAYER ${this.winner} WINS!`;
+        if (this.isCpuMode) {
+            winText = this.winner === 1 ? 'YOU WIN!' : 'CPU WINS!';
+        }
+
+        this.add.text(GAME_WIDTH / 2, 80, winText, {
             fontSize: '48px',
             fontFamily: 'Impact, Arial Black, sans-serif',
             color: winnerColor,
@@ -685,7 +1167,7 @@ const config = {
             debug: false
         }
     },
-    scene: [PreloadScene, TitleScene, SelectScene, BattleScene, VictoryScene],
+    scene: [PreloadScene, TitleScene, ModeSelectScene, SelectScene, BattleScene, VictoryScene],
     input: {
         activePointers: 4 // マルチタッチ対応
     }
