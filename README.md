@@ -13,8 +13,6 @@ https://rsasaki0109.github.io/internet_meme_allstars/
 - **1P vs CPU** - CPUと対戦（難易度: Easy / Normal / Hard）
 - **2P vs 2P** - 1端末で2人対戦
 
-![CPU Mode](assets/gameplay_cpu_mode.gif)
-
 ![Battle Demo](assets/battle_demo.gif)
 
 ## Characters
