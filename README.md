@@ -2,6 +2,8 @@
 
 2D横対戦アクションゲーム
 
+![Gameplay](assets/gameplay.gif)
+
 ## Play
 
 https://rsasaki0109.github.io/internet_meme_allstars/
