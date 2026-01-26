@@ -804,7 +804,8 @@ class BattleScene extends Phaser.Scene {
         }
 
         // ノックバック計算
-        let knockbackPower = attacker.charData.knockback * (1 + defender.damage / 100);
+        // ベースノックバック + ダメージ蓄積で増加
+        let knockbackPower = (attacker.charData.knockback + 0.5) * (1.2 + defender.damage / 80);
 
         // Doge特殊効果：30%で即死ノックバック
         if (attacker.charKey === 'doge' && Math.random() < 0.3) {
@@ -925,9 +926,10 @@ class BattleScene extends Phaser.Scene {
                     this.p2DamageText.setText(`${target.damage}%`);
                 }
 
-                // ノックバック
+                // ノックバック（ダメージに応じて増加）
                 const knockbackDir = proj.body.velocity.x > 0 ? 1 : -1;
-                target.sprite.body.setVelocity(knockbackDir * 200, -150);
+                const projKB = 1 + target.damage / 100;
+                target.sprite.body.setVelocity(knockbackDir * 300 * projKB, -200 * projKB);
 
                 this.showText('*splash*', target.sprite.x, target.sprite.y - 30, '#00bfff');
                 this.cameras.main.shake(80, 0.008);
