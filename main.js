@@ -11,9 +11,8 @@ const CHARACTERS = {
         name: 'Doge',
         color: 0xffcc00,
         speed: 1.2,
-        damage: 10,
-        knockback: 0.8,
-        special: 'instantKO', // 30%で即死
+        damage: 12,
+        knockback: 1.0,
         doubleJump: true, // 二段ジャンプ
         attackCooldown: 80, // 攻撃硬直短め（通常100）
         attackRange: 70,
@@ -81,6 +80,25 @@ const GROUND_Y = GAME_HEIGHT - 80;
 const RESPAWN_INVINCIBLE_TIME = 1000;
 const REVERSE_CONTROL_TIME = 500;
 const STOCKS = 3;
+
+// 必殺技ゲージ
+const SPECIAL_GAUGE_MAX = 100;
+const SPECIAL_GAUGE_GAIN_HIT = 15;    // 攻撃命中時
+const SPECIAL_GAUGE_GAIN_DAMAGE = 10; // 被ダメージ時
+const SPECIAL_DAMAGE_MULTIPLIER = 2.5;
+const SPECIAL_KNOCKBACK_MULTIPLIER = 2.0;
+
+// コンボシステム
+const COMBO_WINDOW = 1500; // コンボ継続時間(ms)
+const COMBO_DAMAGE_BONUS = 0.15; // コンボ毎のダメージボーナス
+
+// アイテム
+const ITEM_SPAWN_INTERVAL = 8000; // アイテム出現間隔(ms)
+const ITEMS = {
+    heal: { color: 0x00ff00, effect: 'heal', value: -30, text: 'HEAL!' },
+    power: { color: 0xff0000, effect: 'power', value: 1.5, duration: 5000, text: 'POWER UP!' },
+    speed: { color: 0x00ffff, effect: 'speed', value: 1.5, duration: 5000, text: 'SPEED UP!' }
+};
 
 // CPU難易度設定
 const CPU_DIFFICULTY = {
@@ -439,6 +457,12 @@ class BattleScene extends Phaser.Scene {
         this.floor = this.add.rectangle(GAME_WIDTH / 2, GROUND_Y + 30, GAME_WIDTH - 100, 20, 0x444444);
         this.physics.add.existing(this.floor, true);
 
+        // 浮遊プラットフォーム（ステージギミック）
+        this.platforms = [];
+        this.createPlatform(200, GROUND_Y - 80, 120);
+        this.createPlatform(GAME_WIDTH - 200, GROUND_Y - 80, 120);
+        this.createPlatform(GAME_WIDTH / 2, GROUND_Y - 150, 100, true); // 動く床
+
         // プレイヤー作成
         this.player1 = this.createPlayer(1, this.p1Char, GAME_WIDTH / 3);
         this.player2 = this.createPlayer(2, this.p2Char, GAME_WIDTH * 2 / 3);
@@ -446,9 +470,22 @@ class BattleScene extends Phaser.Scene {
         // 物理衝突
         this.physics.add.collider(this.player1.sprite, this.floor);
         this.physics.add.collider(this.player2.sprite, this.floor);
+        this.platforms.forEach(p => {
+            this.physics.add.collider(this.player1.sprite, p);
+            this.physics.add.collider(this.player2.sprite, p);
+        });
 
         // 飛び道具グループ
         this.projectiles = this.add.group();
+
+        // アイテムグループ
+        this.items = this.add.group();
+        this.itemSpawnTimer = this.time.addEvent({
+            delay: ITEM_SPAWN_INTERVAL,
+            callback: this.spawnItem,
+            callbackScope: this,
+            loop: true
+        });
 
         // UI作成
         this.createUI();
@@ -466,6 +503,55 @@ class BattleScene extends Phaser.Scene {
 
         // 更新処理
         this.gameOver = false;
+    }
+
+    createPlatform(x, y, width, moving = false) {
+        const platform = this.add.rectangle(x, y, width, 15, 0x666666);
+        this.physics.add.existing(platform, true);
+        this.platforms.push(platform);
+
+        if (moving) {
+            platform.moveDir = 1;
+            platform.startX = x;
+            platform.isMoving = true;
+        }
+        return platform;
+    }
+
+    spawnItem() {
+        if (this.gameOver) return;
+
+        const itemKeys = Object.keys(ITEMS);
+        const itemKey = itemKeys[Math.floor(Math.random() * itemKeys.length)];
+        const itemData = ITEMS[itemKey];
+
+        const x = 150 + Math.random() * (GAME_WIDTH - 300);
+        const y = 50;
+
+        const item = this.add.circle(x, y, 15, itemData.color);
+        this.physics.add.existing(item);
+        item.body.setGravityY(300);
+        item.body.setBounce(0.5);
+        item.itemKey = itemKey;
+        item.itemData = itemData;
+
+        this.items.add(item);
+
+        // プラットフォームとの衝突
+        this.physics.add.collider(item, this.floor);
+        this.platforms.forEach(p => this.physics.add.collider(item, p));
+
+        // 一定時間で消滅
+        this.time.delayedCall(10000, () => {
+            if (item.active) {
+                this.tweens.add({
+                    targets: item,
+                    alpha: 0,
+                    duration: 500,
+                    onComplete: () => item.destroy()
+                });
+            }
+        });
     }
 
     createPlayer(num, charKey, x) {
@@ -522,7 +608,13 @@ class BattleScene extends Phaser.Scene {
             maxJumps: charData.tripleJump ? 3 : (charData.doubleJump ? 2 : 1),
             isCountering: false,
             counterTimer: null,
-            rainbowTrail
+            rainbowTrail,
+            // 新機能
+            specialGauge: 0,
+            combo: 0,
+            lastHitTime: 0,
+            powerUp: 1.0,
+            speedUp: 1.0
         };
     }
 
@@ -545,10 +637,27 @@ class BattleScene extends Phaser.Scene {
         this.p2StocksContainer = this.add.container(GAME_WIDTH - 100, GAME_HEIGHT - 30);
         this.updateStockDisplay(2);
 
+        // 必殺技ゲージ（画面上部）
+        this.p1GaugeBg = this.add.rectangle(120, 25, 100, 12, 0x333333);
+        this.p1GaugeFill = this.add.rectangle(70, 25, 0, 10, 0x4ecdc4).setOrigin(0, 0.5);
+        this.add.text(70, 25, 'SP', { fontSize: '10px', color: '#4ecdc4' }).setOrigin(1.2, 0.5);
+
+        this.p2GaugeBg = this.add.rectangle(GAME_WIDTH - 120, 25, 100, 12, 0x333333);
+        this.p2GaugeFill = this.add.rectangle(GAME_WIDTH - 170, 25, 0, 10, 0xff6b6b).setOrigin(0, 0.5);
+        this.add.text(GAME_WIDTH - 170, 25, 'SP', { fontSize: '10px', color: '#ff6b6b' }).setOrigin(1.2, 0.5);
+
+        // コンボ表示
+        this.p1ComboText = this.add.text(20, 50, '', {
+            fontSize: '18px', color: '#ffff00', stroke: '#000', strokeThickness: 2
+        });
+        this.p2ComboText = this.add.text(GAME_WIDTH - 20, 50, '', {
+            fontSize: '18px', color: '#ffff00', stroke: '#000', strokeThickness: 2
+        }).setOrigin(1, 0);
+
         // モード表示
         if (this.isCpuMode) {
-            this.add.text(GAME_WIDTH / 2, 15, `VS CPU (${cpuDifficulty.toUpperCase()})`, {
-                fontSize: '16px',
+            this.add.text(GAME_WIDTH / 2, 45, `VS CPU (${cpuDifficulty.toUpperCase()})`, {
+                fontSize: '14px',
                 color: '#888888'
             }).setOrigin(0.5);
         }
@@ -614,7 +723,8 @@ class BattleScene extends Phaser.Scene {
         // 操作反転チェック
         const actualDir = player.reverseControl ? -direction : direction;
 
-        const speed = BASE_SPEED * player.charData.speed;
+        // スピードアップ反映
+        const speed = BASE_SPEED * player.charData.speed * player.speedUp;
         player.sprite.body.setVelocityX(actualDir * speed);
         player.facingRight = actualDir > 0;
 
@@ -667,8 +777,16 @@ class BattleScene extends Phaser.Scene {
         const defender = playerNum === 1 ? this.player2 : this.player1;
         if (this.gameOver || attacker.isAttacking) return;
 
+        // 必殺技判定（ゲージMAX時）
+        const isSpecial = attacker.specialGauge >= SPECIAL_GAUGE_MAX;
+        if (isSpecial) {
+            attacker.specialGauge = 0;
+            this.showText('SPECIAL ATTACK!', attacker.sprite.x, attacker.sprite.y - 80, '#ff00ff');
+            this.cameras.main.flash(100, 255, 0, 255, 0.3);
+        }
+
         // Wojakのカウンター技
-        if (attacker.charKey === 'wojak' && !attacker.isCountering) {
+        if (attacker.charKey === 'wojak' && !attacker.isCountering && !isSpecial) {
             this.activateCounter(attacker);
             return;
         }
@@ -677,18 +795,21 @@ class BattleScene extends Phaser.Scene {
 
         // Pepeの遠距離攻撃
         if (attacker.charKey === 'pepe') {
-            this.fireProjectile(attacker);
+            this.fireProjectile(attacker, isSpecial);
             this.time.delayedCall(attacker.charData.attackCooldown, () => {
                 attacker.isAttacking = false;
             });
             return;
         }
 
-        // 攻撃エフェクト
+        // 攻撃エフェクト（必殺技時は大きい）
         const attackDir = attacker.facingRight ? 1 : -1;
         const attackX = attacker.sprite.x + (attackDir * 40);
-        const attackWidth = attacker.charData.attackRange === 90 ? 50 : 40; // Trollfaceは広め
-        const attackHitbox = this.add.rectangle(attackX, attacker.sprite.y, attackWidth, 50, 0xff0000, 0.5);
+        const baseWidth = attacker.charData.attackRange === 90 ? 50 : 40;
+        const attackWidth = isSpecial ? baseWidth * 1.5 : baseWidth;
+        const attackHeight = isSpecial ? 70 : 50;
+        const attackColor = isSpecial ? 0xff00ff : 0xff0000;
+        const attackHitbox = this.add.rectangle(attackX, attacker.sprite.y, attackWidth, attackHeight, attackColor, 0.6);
 
         // 攻撃硬直
         const cooldown = attacker.charData.attackCooldown || 100;
@@ -697,18 +818,19 @@ class BattleScene extends Phaser.Scene {
             attacker.isAttacking = false;
         });
 
-        // 当たり判定
+        // 当たり判定（必殺技時は範囲拡大）
         const dx = Math.abs(attacker.sprite.x - defender.sprite.x);
         const dy = Math.abs(attacker.sprite.y - defender.sprite.y);
-        const range = attacker.charData.attackRange || 70;
-        const inRange = dx < range && dy < 50;
+        const baseRange = attacker.charData.attackRange || 70;
+        const range = isSpecial ? baseRange * 1.5 : baseRange;
+        const inRange = dx < range && dy < (isSpecial ? 70 : 50);
 
         if (inRange && !defender.invincible) {
             // Wojakのカウンター判定
             if (defender.isCountering) {
                 this.triggerCounter(defender, attacker);
             } else {
-                this.applyHit(attacker, defender);
+                this.applyHit(attacker, defender, isSpecial);
             }
         }
     }
@@ -762,39 +884,56 @@ class BattleScene extends Phaser.Scene {
         this.cameras.main.shake(150, 0.02);
     }
 
-    fireProjectile(attacker) {
+    fireProjectile(attacker, isSpecial = false) {
         const dir = attacker.facingRight ? 1 : -1;
 
-        // 涙弾（Pepe専用）
+        // 涙弾（Pepe専用）- 必殺技時は大きく強力
+        const size = isSpecial ? 1.8 : 1;
+        const color = isSpecial ? 0xff00ff : 0x00bfff;
         const tear = this.add.ellipse(
             attacker.sprite.x + dir * 30,
             attacker.sprite.y,
-            15, 20,
-            0x00bfff, 0.8
+            15 * size, 20 * size,
+            color, 0.8
         );
         this.physics.add.existing(tear);
-        tear.body.setVelocityX(dir * 400);
+        tear.body.setVelocityX(dir * (isSpecial ? 500 : 400));
         tear.body.setAllowGravity(false);
 
         tear.attackerNum = attacker.num;
-        tear.damage = attacker.charData.damage;
+        tear.damage = attacker.charData.damage * (isSpecial ? SPECIAL_DAMAGE_MULTIPLIER : 1);
+        tear.isSpecial = isSpecial;
 
         this.projectiles.add(tear);
 
         // 一定時間で消滅
-        this.time.delayedCall(1500, () => {
+        this.time.delayedCall(isSpecial ? 2000 : 1500, () => {
             if (tear.active) tear.destroy();
         });
 
-        this.showText('*sob*', attacker.sprite.x, attacker.sprite.y - 30, '#00bfff');
+        const text = isSpecial ? 'MEGA SOB!' : '*sob*';
+        this.showText(text, attacker.sprite.x, attacker.sprite.y - 30, isSpecial ? '#ff00ff' : '#00bfff');
     }
 
-    applyHit(attacker, defender) {
+    applyHit(attacker, defender, isSpecial = false) {
         // スーパーアーマー判定（Trollfaceが攻撃中の場合）
         const hasArmor = attacker.charData.superArmor && attacker.isAttacking;
 
-        const damage = attacker.charData.damage;
-        defender.damage += damage;
+        // コンボ判定
+        const now = this.time.now;
+        if (now - attacker.lastHitTime < COMBO_WINDOW) {
+            attacker.combo++;
+        } else {
+            attacker.combo = 1;
+        }
+        attacker.lastHitTime = now;
+
+        // ダメージ計算（コンボボーナス + パワーアップ + 必殺技）
+        let damage = attacker.charData.damage * attacker.powerUp;
+        damage *= (1 + (attacker.combo - 1) * COMBO_DAMAGE_BONUS); // コンボボーナス
+        if (isSpecial) damage *= SPECIAL_DAMAGE_MULTIPLIER;
+
+        defender.damage += Math.floor(damage);
 
         // ダメージ表示更新
         if (defender.num === 1) {
@@ -803,15 +942,13 @@ class BattleScene extends Phaser.Scene {
             this.p2DamageText.setText(`${defender.damage}%`);
         }
 
-        // ノックバック計算
-        // ベースノックバック + ダメージ蓄積で増加
-        let knockbackPower = (attacker.charData.knockback + 0.5) * (1.2 + defender.damage / 80);
+        // 必殺技ゲージ増加
+        attacker.specialGauge = Math.min(SPECIAL_GAUGE_MAX, attacker.specialGauge + SPECIAL_GAUGE_GAIN_HIT);
+        defender.specialGauge = Math.min(SPECIAL_GAUGE_MAX, defender.specialGauge + SPECIAL_GAUGE_GAIN_DAMAGE);
 
-        // Doge特殊効果：30%で即死ノックバック
-        if (attacker.charKey === 'doge' && Math.random() < 0.3) {
-            knockbackPower *= 5;
-            this.showText('MUCH WOW!', defender.sprite.x, defender.sprite.y - 50, '#ffcc00');
-        }
+        // ノックバック計算
+        let knockbackPower = (attacker.charData.knockback + 0.5) * (1.2 + defender.damage / 80);
+        if (isSpecial) knockbackPower *= SPECIAL_KNOCKBACK_MULTIPLIER;
 
         // Trollface特殊効果：操作反転
         if (attacker.charKey === 'trollface') {
@@ -833,7 +970,8 @@ class BattleScene extends Phaser.Scene {
         }
 
         // ヒットエフェクト
-        this.cameras.main.shake(100, 0.01);
+        const shakeIntensity = isSpecial ? 0.03 : 0.01;
+        this.cameras.main.shake(isSpecial ? 200 : 100, shakeIntensity);
         this.tweens.add({
             targets: [defender.sprite, defender.outline],
             alpha: 0.5,
@@ -841,9 +979,15 @@ class BattleScene extends Phaser.Scene {
             yoyo: true
         });
 
-        // ヒットSE表示（実際の音は省略）
-        const seText = Math.random() < 0.5 ? 'BONK!' : 'BRUH!';
-        this.showText(seText, defender.sprite.x, defender.sprite.y - 30, '#ff6b6b');
+        // コンボ表示
+        if (attacker.combo >= 2) {
+            this.showText(`${attacker.combo} COMBO!`, attacker.sprite.x, attacker.sprite.y - 70, '#ffff00');
+        }
+
+        // ヒットSE表示
+        const seText = isSpecial ? 'SPECIAL!' : (Math.random() < 0.5 ? 'BONK!' : 'BRUH!');
+        const seColor = isSpecial ? '#ff00ff' : '#ff6b6b';
+        this.showText(seText, defender.sprite.x, defender.sprite.y - 30, seColor);
     }
 
     showText(text, x, y, color) {
@@ -984,6 +1128,18 @@ class BattleScene extends Phaser.Scene {
         // 飛び道具更新
         this.updateProjectiles();
 
+        // アイテム取得判定
+        this.updateItems();
+
+        // 動くプラットフォーム更新
+        this.updatePlatforms();
+
+        // ゲージUI更新
+        this.updateGaugeUI();
+
+        // コンボUI更新
+        this.updateComboUI();
+
         // Nyan Cat虹エフェクト
         this.updateNyanCatRainbow();
 
@@ -996,6 +1152,110 @@ class BattleScene extends Phaser.Scene {
         // KO判定
         this.checkKO(this.player1);
         this.checkKO(this.player2);
+    }
+
+    updateItems() {
+        this.items.getChildren().forEach(item => {
+            if (!item.active) return;
+
+            [this.player1, this.player2].forEach(player => {
+                const dx = Math.abs(item.x - player.sprite.x);
+                const dy = Math.abs(item.y - player.sprite.y);
+
+                if (dx < 40 && dy < 40) {
+                    this.applyItem(player, item);
+                    item.destroy();
+                }
+            });
+        });
+    }
+
+    applyItem(player, item) {
+        const data = item.itemData;
+        this.showText(data.text, player.sprite.x, player.sprite.y - 50, '#' + data.color.toString(16).padStart(6, '0'));
+
+        switch (data.effect) {
+            case 'heal':
+                player.damage = Math.max(0, player.damage + data.value);
+                if (player.num === 1) {
+                    this.p1DamageText.setText(`${player.damage}%`);
+                } else {
+                    this.p2DamageText.setText(`${player.damage}%`);
+                }
+                break;
+            case 'power':
+                player.powerUp = data.value;
+                this.time.delayedCall(data.duration, () => { player.powerUp = 1.0; });
+                // パワーアップエフェクト
+                player.sprite.setTint(0xff0000);
+                this.time.delayedCall(data.duration, () => { player.sprite.clearTint(); });
+                break;
+            case 'speed':
+                player.speedUp = data.value;
+                this.time.delayedCall(data.duration, () => { player.speedUp = 1.0; });
+                // スピードアップエフェクト
+                player.sprite.setTint(0x00ffff);
+                this.time.delayedCall(data.duration, () => { player.sprite.clearTint(); });
+                break;
+        }
+
+        // アイテム取得エフェクト
+        this.cameras.main.flash(50, 255, 255, 255, 0.2);
+    }
+
+    updatePlatforms() {
+        this.platforms.forEach(platform => {
+            if (platform.isMoving) {
+                const speed = 1.5;
+                platform.x += speed * platform.moveDir;
+
+                // 移動範囲制限
+                if (platform.x > platform.startX + 80) platform.moveDir = -1;
+                if (platform.x < platform.startX - 80) platform.moveDir = 1;
+
+                platform.body.updateFromGameObject();
+            }
+        });
+    }
+
+    updateGaugeUI() {
+        // P1ゲージ
+        const p1Width = (this.player1.specialGauge / SPECIAL_GAUGE_MAX) * 100;
+        this.p1GaugeFill.setSize(p1Width, 10);
+        if (this.player1.specialGauge >= SPECIAL_GAUGE_MAX) {
+            this.p1GaugeFill.setFillStyle(0xffff00); // MAX時は黄色
+        } else {
+            this.p1GaugeFill.setFillStyle(0x4ecdc4);
+        }
+
+        // P2ゲージ
+        const p2Width = (this.player2.specialGauge / SPECIAL_GAUGE_MAX) * 100;
+        this.p2GaugeFill.setSize(p2Width, 10);
+        if (this.player2.specialGauge >= SPECIAL_GAUGE_MAX) {
+            this.p2GaugeFill.setFillStyle(0xffff00);
+        } else {
+            this.p2GaugeFill.setFillStyle(0xff6b6b);
+        }
+    }
+
+    updateComboUI() {
+        const now = this.time.now;
+
+        // P1コンボ
+        if (this.player1.combo >= 2 && now - this.player1.lastHitTime < COMBO_WINDOW) {
+            this.p1ComboText.setText(`${this.player1.combo} HIT`);
+        } else {
+            this.p1ComboText.setText('');
+            this.player1.combo = 0;
+        }
+
+        // P2コンボ
+        if (this.player2.combo >= 2 && now - this.player2.lastHitTime < COMBO_WINDOW) {
+            this.p2ComboText.setText(`${this.player2.combo} HIT`);
+        } else {
+            this.p2ComboText.setText('');
+            this.player2.combo = 0;
+        }
     }
 
     checkKO(player) {
@@ -1042,6 +1302,10 @@ class BattleScene extends Phaser.Scene {
         player.invincible = true;
         player.reverseControl = false;
         player.jumpCount = 0;
+        player.combo = 0;
+        player.powerUp = 1.0;
+        player.speedUp = 1.0;
+        player.sprite.clearTint();
 
         // ダメージ表示リセット
         if (player.num === 1) {

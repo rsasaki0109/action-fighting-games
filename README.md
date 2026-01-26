@@ -15,6 +15,8 @@ https://rsasaki0109.github.io/internet_meme_allstars/
 
 ![Battle Demo](assets/battle_demo.gif)
 
+![Battle Enhanced](assets/battle_enhanced.gif)
+
 ## Characters
 
 | キャラ | 特徴 |
