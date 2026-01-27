@@ -2,7 +2,7 @@
 
 2D横対戦アクションゲーム
 
-![Gameplay](assets/gameplay.gif)
+![Battle](assets/battle_enhanced.gif)
 
 ## Play
 
@@ -12,10 +12,6 @@ https://rsasaki0109.github.io/internet_meme_allstars/
 
 - **1P vs CPU** - CPUと対戦（難易度: Easy / Normal / Hard）
 - **2P vs 2P** - 1端末で2人対戦
-
-![Battle Demo](assets/battle_demo.gif)
-
-![Battle Enhanced](assets/battle_enhanced.gif)
 
 ## Characters
 
