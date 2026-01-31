@@ -523,6 +523,7 @@ function processAttacks() {
 
 // UI更新
 function updateUI() {
+    if (!player || !cpu) return;
     playerHpBar.style.width = `${(player.hp / player.maxHp) * 100}%`;
     playerStaminaBar.style.width = `${(player.stamina / player.maxStamina) * 100}%`;
     cpuHpBar.style.width = `${(cpu.hp / cpu.maxHp) * 100}%`;
