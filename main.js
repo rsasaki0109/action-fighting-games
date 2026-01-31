@@ -1,3 +1,6 @@
+// デモモード判定
+const DEMO_MODE = new URLSearchParams(window.location.search).get('demo') === '1';
+
 // ゲーム定数
 const CANVAS_WIDTH = 800;
 const CANVAS_HEIGHT = 400;
@@ -470,6 +473,7 @@ class CpuAI {
 }
 
 let cpuAI;
+let playerAI; // デモモード用
 
 // 当たり判定チェック
 function checkCollision(box1, box2) {
@@ -585,6 +589,9 @@ function initGame() {
     player = new Fighter(100, true, true);
     cpu = new Fighter(CANVAS_WIDTH - 160, false, false);
     cpuAI = new CpuAI(cpu);
+    if (DEMO_MODE) {
+        playerAI = new CpuAI(player);
+    }
     gameTimer = 60;
     frameCount = 0;
 }
@@ -662,7 +669,11 @@ function gameLoop() {
         }
 
         // 入力処理
-        handleInput();
+        if (DEMO_MODE) {
+            playerAI.update(cpu);
+        } else {
+            handleInput();
+        }
 
         // 更新
         player.update(cpu);
@@ -724,3 +735,8 @@ startBtn.addEventListener('click', async () => {
 
 // ゲームループ開始
 gameLoop();
+
+// デモモードなら自動スタート
+if (DEMO_MODE) {
+    startBtn.click();
+}
