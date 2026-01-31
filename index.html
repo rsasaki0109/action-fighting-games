@@ -297,17 +297,19 @@
 
             // 暗殺可能判定
             canAssassinate(enemy) {
-                const dx = enemy.x - this.player.x;
-                const dy = enemy.y - this.player.y;
+                // 敵からプレイヤーへのベクトル
+                const dx = this.player.x - enemy.x;
+                const dy = this.player.y - enemy.y;
                 const dist = Math.sqrt(dx * dx + dy * dy);
 
                 // 距離チェック
                 if (dist > CONFIG.KILL_RANGE) return false;
 
                 // 敵の背後かどうかチェック
-                const playerAngle = Math.atan2(dy, dx);
+                // 敵からプレイヤーへの角度が、敵の背後方向に近いか
+                const angleToPlayer = Math.atan2(dy, dx);
                 const enemyBack = enemy.angle + Math.PI; // 敵の背後方向
-                let angleDiff = Math.abs(playerAngle - enemyBack);
+                let angleDiff = Math.abs(angleToPlayer - enemyBack);
                 if (angleDiff > Math.PI) angleDiff = 2 * Math.PI - angleDiff;
 
                 return angleDiff < CONFIG.KILL_ANGLE / 2;
@@ -493,14 +495,15 @@
                 // 暗殺可能な敵がいるかチェック
                 let canKill = false;
                 for (const enemy of enemies) {
-                    const dx = enemy.x - this.x;
-                    const dy = enemy.y - this.y;
+                    // 敵からプレイヤーへのベクトル
+                    const dx = this.x - enemy.x;
+                    const dy = this.y - enemy.y;
                     const dist = Math.sqrt(dx * dx + dy * dy);
 
                     if (dist <= CONFIG.KILL_RANGE) {
-                        const playerAngle = Math.atan2(dy, dx);
+                        const angleToPlayer = Math.atan2(dy, dx);
                         const enemyBack = enemy.angle + Math.PI;
-                        let angleDiff = Math.abs(playerAngle - enemyBack);
+                        let angleDiff = Math.abs(angleToPlayer - enemyBack);
                         if (angleDiff > Math.PI) angleDiff = 2 * Math.PI - angleDiff;
 
                         if (angleDiff < CONFIG.KILL_ANGLE / 2) {
@@ -640,21 +643,19 @@
         // ステージデータ
         // ========================================
         const STAGES = [
-            // ステージ1: チュートリアル（敵1体）
+            // ステージ1: チュートリアル（敵1体、簡単）
             {
-                player: { x: 100, y: 300 },
+                player: { x: 400, y: 450 },
                 enemies: [
                     {
-                        x: 600, y: 300,
+                        x: 400, y: 300,
                         patrol: [
-                            { x: 600, y: 200, wait: 90 },
-                            { x: 600, y: 400, wait: 90 }
+                            { x: 400, y: 200, wait: 120 },
+                            { x: 400, y: 400, wait: 120 }
                         ]
                     }
                 ],
-                walls: [
-                    { x: 350, y: 150, width: 100, height: 300 }
-                ]
+                walls: []
             },
             // ステージ2: 複数の障害物
             {
