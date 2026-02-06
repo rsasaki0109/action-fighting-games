@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Silent Kill</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #0a0a0a;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Courier New', monospace;
+        }
+
+        #gameContainer {
+            position: relative;
+        }
+
+        canvas {
+            display: block;
+            border: 2px solid #333;
+        }
+
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background-color: rgba(0, 0, 0, 0.85);
+            color: #fff;
+            text-align: center;
+        }
+
+        .overlay.hidden {
+            display: none;
+        }
+
+        .title {
+            font-size: 48px;
+            font-weight: bold;
+            letter-spacing: 8px;
+            margin-bottom: 20px;
+            color: #c41e3a;
+        }
+
+        .subtitle {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 40px;
+            letter-spacing: 2px;
+        }
+
+        .menu-item {
+            font-size: 18px;
+            color: #888;
+            margin: 10px 0;
+            letter-spacing: 1px;
+        }
+
+        .key {
+            color: #c41e3a;
+            font-weight: bold;
+        }
+
+        .message {
+            font-size: 36px;
+            font-weight: bold;
+            letter-spacing: 4px;
+            margin-bottom: 20px;
+        }
+
+        .message.gameover {
+            color: #c41e3a;
+        }
+
+        .message.clear {
+            color: #3ac41e;
+        }
+
+        .stage-info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #666;
+            font-size: 14px;
+            letter-spacing: 1px;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+
+        <!-- タイトル画面 -->
+        <div id="titleScreen" class="overlay">
+            <div class="title">SILENT KILL</div>
+            <div class="subtitle">A STEALTH ASSASSINATION GAME</div>
+            <div class="menu-item"><span class="key">WASD</span> - MOVE</div>
+            <div class="menu-item"><span class="key">SPACE</span> - ASSASSINATE</div>
+            <div class="menu-item"><span class="key">R</span> - RETRY</div>
+            <div class="menu-item" style="margin-top: 30px;">
+                PRESS <span class="key">SPACE</span> TO START
+            </div>
+        </div>
+
+        <!-- ゲームオーバー画面 -->
+        <div id="gameoverScreen" class="overlay hidden">
+            <div class="message gameover">DETECTED</div>
+            <div class="menu-item">PRESS <span class="key">R</span> TO RETRY</div>
+        </div>
+
+        <!-- クリア画面 -->
+        <div id="clearScreen" class="overlay hidden">
+            <div class="message clear">TARGET ELIMINATED</div>
+            <div class="menu-item">PRESS <span class="key">SPACE</span> FOR NEXT STAGE</div>
+        </div>
+
+        <!-- ステージ情報 -->
+        <div id="stageInfo" class="stage-info hidden">STAGE <span id="stageNum">1</span></div>
+    </div>
+
+    <script>
+        // ========================================
+        // ゲーム設定
+        // ========================================
+        const CONFIG = {
+            CANVAS_WIDTH: 800,
+            CANVAS_HEIGHT: 600,
+            PLAYER_SIZE: 12,
+            PLAYER_SPEED: 3,
+            ENEMY_SIZE: 14,
+            ENEMY_SPEED: 1.5,
+            VIEW_CONE_ANGLE: Math.PI / 3,  // 視界コーンの角度（60度）
+            VIEW_CONE_RANGE: 150,           // 視界の距離
+            KILL_RANGE: 30,                 // 暗殺可能距離
+            KILL_ANGLE: Math.PI / 2         // 背後判定の角度範囲
+        };
+
+        // ゲーム状態
+        const STATE = {
+            TITLE: 'title',
+            PLAYING: 'playing',
+            GAMEOVER: 'gameover',
+            CLEAR: 'clear'
+        };
+
+        // ========================================
+        // ゲームクラス
+        // ========================================
+        class Game {
+            constructor() {
+                this.canvas = document.getElementById('gameCanvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.canvas.width = CONFIG.CANVAS_WIDTH;
+                this.canvas.height = CONFIG.CANVAS_HEIGHT;
+
+                this.titleScreen = document.getElementById('titleScreen');
+                this.gameoverScreen = document.getElementById('gameoverScreen');
+                this.clearScreen = document.getElementById('clearScreen');
+                this.stageInfo = document.getElementById('stageInfo');
+                this.stageNum = document.getElementById('stageNum');
+
+                this.state = STATE.TITLE;
+                this.currentStage = 0;
+                this.keys = {};
+                this.player = null;
+                this.enemies = [];
+                this.walls = [];
+
+                this.setupInput();
+                this.gameLoop();
+            }
+
+            // 入力設定
+            setupInput() {
+                window.addEventListener('keydown', (e) => {
+                    this.keys[e.code] = true;
+
+                    // タイトル画面でSpaceを押すとゲーム開始
+                    if (this.state === STATE.TITLE && e.code === 'Space') {
+                        this.startGame();
+                    }
+
+                    // クリア画面でSpaceを押すと次のステージへ
+                    if (this.state === STATE.CLEAR && e.code === 'Space') {
+                        this.nextStage();
+                    }
+
+                    // Rキーでリトライまたはタイトルからやり直し
+                    if (e.code === 'KeyR') {
+                        if (this.state === STATE.GAMEOVER) {
+                            this.retryStage();
+                        } else if (this.state === STATE.PLAYING) {
+                            this.retryStage();
+                        }
+                    }
+
+                    // Spaceで暗殺
+                    if (this.state === STATE.PLAYING && e.code === 'Space') {
+                        this.tryAssassinate();
+                    }
+                });
+
+                window.addEventListener('keyup', (e) => {
+                    this.keys[e.code] = false;
+                });
+            }
+
+            // ゲーム開始
+            startGame() {
+                this.currentStage = 0;
+                this.loadStage(this.currentStage);
+                this.state = STATE.PLAYING;
+                this.hideAllOverlays();
+                this.stageInfo.classList.remove('hidden');
+                this.updateStageDisplay();
+            }
+
+            // 次のステージへ
+            nextStage() {
+                this.currentStage++;
+                if (this.currentStage >= STAGES.length) {
+                    this.currentStage = 0; // ループ
+                }
+                this.loadStage(this.currentStage);
+                this.state = STATE.PLAYING;
+                this.hideAllOverlays();
+                this.updateStageDisplay();
+            }
+
+            // ステージリトライ
+            retryStage() {
+                this.loadStage(this.currentStage);
+                this.state = STATE.PLAYING;
+                this.hideAllOverlays();
+            }
+
+            // ステージ表示更新
+            updateStageDisplay() {
+                this.stageNum.textContent = this.currentStage + 1;
+            }
+
+            // オーバーレイを全て隠す
+            hideAllOverlays() {
+                this.titleScreen.classList.add('hidden');
+                this.gameoverScreen.classList.add('hidden');
+                this.clearScreen.classList.add('hidden');
+            }
+
+            // ステージ読み込み
+            loadStage(stageIndex) {
+                const stage = STAGES[stageIndex];
+
+                // プレイヤー初期化
+                this.player = new Player(stage.player.x, stage.player.y);
+
+                // 敵初期化
+                this.enemies = stage.enemies.map(e =>
+                    new Enemy(e.x, e.y, e.patrol)
+                );
+
+                // 壁初期化
+                this.walls = stage.walls.map(w =>
+                    new Wall(w.x, w.y, w.width, w.height)
+                );
+            }
+
+            // 暗殺試行
+            tryAssassinate() {
+                for (let i = this.enemies.length - 1; i >= 0; i--) {
+                    const enemy = this.enemies[i];
+                    if (this.canAssassinate(enemy)) {
+                        this.enemies.splice(i, 1);
+
+                        // 全ての敵を倒したらクリア
+                        if (this.enemies.length === 0) {
+                            this.state = STATE.CLEAR;
+                            this.clearScreen.classList.remove('hidden');
+                        }
+                        break;
+                    }
+                }
+            }
+
+            // 暗殺可能判定
+            canAssassinate(enemy) {
+                // 敵からプレイヤーへのベクトル
+                const dx = this.player.x - enemy.x;
+                const dy = this.player.y - enemy.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                // 距離チェック
+                if (dist > CONFIG.KILL_RANGE) return false;
+
+                // 敵の背後かどうかチェック
+                // 敵からプレイヤーへの角度が、敵の背後方向に近いか
+                const angleToPlayer = Math.atan2(dy, dx);
+                const enemyBack = enemy.angle + Math.PI; // 敵の背後方向
+                let angleDiff = Math.abs(angleToPlayer - enemyBack);
+                if (angleDiff > Math.PI) angleDiff = 2 * Math.PI - angleDiff;
+
+                return angleDiff < CONFIG.KILL_ANGLE / 2;
+            }
+
+            // ゲームオーバー
+            gameOver() {
+                this.state = STATE.GAMEOVER;
+                this.gameoverScreen.classList.remove('hidden');
+            }
+
+            // 更新処理
+            update() {
+                if (this.state !== STATE.PLAYING) return;
+
+                // プレイヤー移動
+                let dx = 0, dy = 0;
+                if (this.keys['KeyW']) dy -= 1;
+                if (this.keys['KeyS']) dy += 1;
+                if (this.keys['KeyA']) dx -= 1;
+                if (this.keys['KeyD']) dx += 1;
+
+                if (dx !== 0 || dy !== 0) {
+                    const len = Math.sqrt(dx * dx + dy * dy);
+                    dx = (dx / len) * CONFIG.PLAYER_SPEED;
+                    dy = (dy / len) * CONFIG.PLAYER_SPEED;
+
+                    const newX = this.player.x + dx;
+                    const newY = this.player.y + dy;
+
+                    // 壁との衝突判定
+                    if (!this.checkWallCollision(newX, newY, CONFIG.PLAYER_SIZE)) {
+                        this.player.x = newX;
+                        this.player.y = newY;
+                    }
+
+                    // 画面端制限
+                    this.player.x = Math.max(CONFIG.PLAYER_SIZE,
+                        Math.min(CONFIG.CANVAS_WIDTH - CONFIG.PLAYER_SIZE, this.player.x));
+                    this.player.y = Math.max(CONFIG.PLAYER_SIZE,
+                        Math.min(CONFIG.CANVAS_HEIGHT - CONFIG.PLAYER_SIZE, this.player.y));
+                }
+
+                // 敵の更新
+                for (const enemy of this.enemies) {
+                    enemy.update(this.walls);
+
+                    // 視界判定
+                    if (this.isPlayerInSight(enemy)) {
+                        this.gameOver();
+                        return;
+                    }
+                }
+            }
+
+            // 壁との衝突判定
+            checkWallCollision(x, y, size) {
+                for (const wall of this.walls) {
+                    if (x + size > wall.x && x - size < wall.x + wall.width &&
+                        y + size > wall.y && y - size < wall.y + wall.height) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            // プレイヤーが視界内にいるかチェック
+            isPlayerInSight(enemy) {
+                const dx = this.player.x - enemy.x;
+                const dy = this.player.y - enemy.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                // 距離チェック
+                if (dist > CONFIG.VIEW_CONE_RANGE) return false;
+
+                // 角度チェック
+                const angleToPlayer = Math.atan2(dy, dx);
+                let angleDiff = Math.abs(angleToPlayer - enemy.angle);
+                if (angleDiff > Math.PI) angleDiff = 2 * Math.PI - angleDiff;
+
+                if (angleDiff > CONFIG.VIEW_CONE_ANGLE / 2) return false;
+
+                // 壁による遮蔽チェック
+                if (this.isBlockedByWall(enemy.x, enemy.y, this.player.x, this.player.y)) {
+                    return false;
+                }
+
+                return true;
+            }
+
+            // 壁による視線遮蔽チェック
+            isBlockedByWall(x1, y1, x2, y2) {
+                for (const wall of this.walls) {
+                    if (this.lineIntersectsRect(x1, y1, x2, y2,
+                        wall.x, wall.y, wall.width, wall.height)) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            // 線分と矩形の交差判定
+            lineIntersectsRect(x1, y1, x2, y2, rx, ry, rw, rh) {
+                // 矩形の4辺との交差を判定
+                return this.lineIntersectsLine(x1, y1, x2, y2, rx, ry, rx + rw, ry) ||
+                       this.lineIntersectsLine(x1, y1, x2, y2, rx + rw, ry, rx + rw, ry + rh) ||
+                       this.lineIntersectsLine(x1, y1, x2, y2, rx, ry + rh, rx + rw, ry + rh) ||
+                       this.lineIntersectsLine(x1, y1, x2, y2, rx, ry, rx, ry + rh);
+            }
+
+            // 線分同士の交差判定
+            lineIntersectsLine(x1, y1, x2, y2, x3, y3, x4, y4) {
+                const d = (x2 - x1) * (y4 - y3) - (y2 - y1) * (x4 - x3);
+                if (d === 0) return false;
+
+                const t = ((x3 - x1) * (y4 - y3) - (y3 - y1) * (x4 - x3)) / d;
+                const u = -((x2 - x1) * (y3 - y1) - (y2 - y1) * (x3 - x1)) / d;
+
+                return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+            }
+
+            // 描画処理
+            draw() {
+                // 背景
+                this.ctx.fillStyle = '#1a1a1a';
+                this.ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
+
+                if (this.state === STATE.TITLE) return;
+
+                // グリッド描画（装飾）
+                this.ctx.strokeStyle = '#222';
+                this.ctx.lineWidth = 1;
+                for (let x = 0; x < CONFIG.CANVAS_WIDTH; x += 50) {
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(x, 0);
+                    this.ctx.lineTo(x, CONFIG.CANVAS_HEIGHT);
+                    this.ctx.stroke();
+                }
+                for (let y = 0; y < CONFIG.CANVAS_HEIGHT; y += 50) {
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(0, y);
+                    this.ctx.lineTo(CONFIG.CANVAS_WIDTH, y);
+                    this.ctx.stroke();
+                }
+
+                // 壁描画
+                for (const wall of this.walls) {
+                    wall.draw(this.ctx);
+                }
+
+                // 敵の視界コーンと敵本体を描画
+                for (const enemy of this.enemies) {
+                    enemy.drawViewCone(this.ctx);
+                }
+                for (const enemy of this.enemies) {
+                    enemy.draw(this.ctx);
+                }
+
+                // プレイヤー描画
+                if (this.player) {
+                    this.player.draw(this.ctx, this.enemies);
+                }
+            }
+
+            // ゲームループ
+            gameLoop() {
+                this.update();
+                this.draw();
+                requestAnimationFrame(() => this.gameLoop());
+            }
+        }
+
+        // ========================================
+        // プレイヤークラス
+        // ========================================
+        class Player {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+            }
+
+            draw(ctx, enemies) {
+                // 暗殺可能な敵がいるかチェック
+                let canKill = false;
+                for (const enemy of enemies) {
+                    // 敵からプレイヤーへのベクトル
+                    const dx = this.x - enemy.x;
+                    const dy = this.y - enemy.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+
+                    if (dist <= CONFIG.KILL_RANGE) {
+                        const angleToPlayer = Math.atan2(dy, dx);
+                        const enemyBack = enemy.angle + Math.PI;
+                        let angleDiff = Math.abs(angleToPlayer - enemyBack);
+                        if (angleDiff > Math.PI) angleDiff = 2 * Math.PI - angleDiff;
+
+                        if (angleDiff < CONFIG.KILL_ANGLE / 2) {
+                            canKill = true;
+                            break;
+                        }
+                    }
+                }
+
+                // プレイヤー描画（暗殺可能時は色を変える）
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, CONFIG.PLAYER_SIZE, 0, Math.PI * 2);
+                ctx.fillStyle = canKill ? '#3ac41e' : '#4a9eff';
+                ctx.fill();
+
+                // 暗殺可能インジケーター
+                if (canKill) {
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, CONFIG.PLAYER_SIZE + 5, 0, Math.PI * 2);
+                    ctx.strokeStyle = '#3ac41e';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                }
+            }
+        }
+
+        // ========================================
+        // 敵クラス
+        // ========================================
+        class Enemy {
+            constructor(x, y, patrol) {
+                this.x = x;
+                this.y = y;
+                this.patrol = patrol;          // 巡回ポイントの配列
+                this.patrolIndex = 0;          // 現在の目標ポイント
+                this.angle = 0;                // 向いている方向
+                this.waitTimer = 0;            // 待機タイマー
+            }
+
+            update(walls) {
+                if (this.waitTimer > 0) {
+                    this.waitTimer--;
+                    return;
+                }
+
+                const target = this.patrol[this.patrolIndex];
+                const dx = target.x - this.x;
+                const dy = target.y - this.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist < 5) {
+                    // 目標地点に到達
+                    this.waitTimer = target.wait || 60;
+                    this.patrolIndex = (this.patrolIndex + 1) % this.patrol.length;
+                } else {
+                    // 移動
+                    const moveX = (dx / dist) * CONFIG.ENEMY_SPEED;
+                    const moveY = (dy / dist) * CONFIG.ENEMY_SPEED;
+                    this.x += moveX;
+                    this.y += moveY;
+
+                    // 向きを更新
+                    this.angle = Math.atan2(dy, dx);
+                }
+            }
+
+            drawViewCone(ctx) {
+                // 視界コーン描画
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y);
+
+                const startAngle = this.angle - CONFIG.VIEW_CONE_ANGLE / 2;
+                const endAngle = this.angle + CONFIG.VIEW_CONE_ANGLE / 2;
+
+                ctx.arc(this.x, this.y, CONFIG.VIEW_CONE_RANGE, startAngle, endAngle);
+                ctx.closePath();
+
+                // グラデーション
+                const gradient = ctx.createRadialGradient(
+                    this.x, this.y, 0,
+                    this.x, this.y, CONFIG.VIEW_CONE_RANGE
+                );
+                gradient.addColorStop(0, 'rgba(255, 100, 100, 0.3)');
+                gradient.addColorStop(1, 'rgba(255, 100, 100, 0)');
+                ctx.fillStyle = gradient;
+                ctx.fill();
+
+                // 視界コーンの縁
+                ctx.strokeStyle = 'rgba(255, 100, 100, 0.3)';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+
+            draw(ctx) {
+                // 敵本体
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, CONFIG.ENEMY_SIZE, 0, Math.PI * 2);
+                ctx.fillStyle = '#c41e3a';
+                ctx.fill();
+
+                // 向きを示す線
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y);
+                ctx.lineTo(
+                    this.x + Math.cos(this.angle) * (CONFIG.ENEMY_SIZE + 8),
+                    this.y + Math.sin(this.angle) * (CONFIG.ENEMY_SIZE + 8)
+                );
+                ctx.strokeStyle = '#ff6b6b';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+            }
+        }
+
+        // ========================================
+        // 壁クラス
+        // ========================================
+        class Wall {
+            constructor(x, y, width, height) {
+                this.x = x;
+                this.y = y;
+                this.width = width;
+                this.height = height;
+            }
+
+            draw(ctx) {
+                ctx.fillStyle = '#333';
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+
+                // 縁取り
+                ctx.strokeStyle = '#444';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(this.x, this.y, this.width, this.height);
+            }
+        }
+
+        // ========================================
+        // ステージデータ
+        // ========================================
+        const STAGES = [
+            // ステージ1: チュートリアル（敵1体、簡単）
+            {
+                player: { x: 400, y: 450 },
+                enemies: [
+                    {
+                        x: 400, y: 300,
+                        patrol: [
+                            { x: 400, y: 200, wait: 120 },
+                            { x: 400, y: 400, wait: 120 }
+                        ]
+                    }
+                ],
+                walls: []
+            },
+            // ステージ2: 複数の障害物
+            {
+                player: { x: 100, y: 550 },
+                enemies: [
+                    {
+                        x: 400, y: 300,
+                        patrol: [
+                            { x: 300, y: 300, wait: 60 },
+                            { x: 500, y: 300, wait: 60 }
+                        ]
+                    }
+                ],
+                walls: [
+                    { x: 200, y: 100, width: 80, height: 200 },
+                    { x: 200, y: 400, width: 80, height: 150 },
+                    { x: 500, y: 150, width: 80, height: 150 },
+                    { x: 500, y: 400, width: 80, height: 150 }
+                ]
+            },
+            // ステージ3: 2体の敵
+            {
+                player: { x: 50, y: 300 },
+                enemies: [
+                    {
+                        x: 300, y: 150,
+                        patrol: [
+                            { x: 200, y: 150, wait: 60 },
+                            { x: 400, y: 150, wait: 60 }
+                        ]
+                    },
+                    {
+                        x: 600, y: 450,
+                        patrol: [
+                            { x: 500, y: 450, wait: 60 },
+                            { x: 700, y: 450, wait: 60 }
+                        ]
+                    }
+                ],
+                walls: [
+                    { x: 150, y: 250, width: 500, height: 30 },
+                    { x: 150, y: 350, width: 500, height: 30 }
+                ]
+            },
+            // ステージ4: 迷路風
+            {
+                player: { x: 50, y: 50 },
+                enemies: [
+                    {
+                        x: 700, y: 500,
+                        patrol: [
+                            { x: 700, y: 300, wait: 90 },
+                            { x: 700, y: 500, wait: 90 }
+                        ]
+                    },
+                    {
+                        x: 400, y: 300,
+                        patrol: [
+                            { x: 300, y: 300, wait: 60 },
+                            { x: 500, y: 300, wait: 60 }
+                        ]
+                    }
+                ],
+                walls: [
+                    { x: 100, y: 0, width: 30, height: 200 },
+                    { x: 100, y: 300, width: 30, height: 300 },
+                    { x: 250, y: 100, width: 30, height: 400 },
+                    { x: 400, y: 0, width: 30, height: 200 },
+                    { x: 400, y: 400, width: 30, height: 200 },
+                    { x: 550, y: 100, width: 30, height: 300 },
+                    { x: 550, y: 500, width: 30, height: 100 }
+                ]
+            },
+            // ステージ5: 広場
+            {
+                player: { x: 100, y: 300 },
+                enemies: [
+                    {
+                        x: 400, y: 200,
+                        patrol: [
+                            { x: 250, y: 200, wait: 45 },
+                            { x: 550, y: 200, wait: 45 },
+                            { x: 550, y: 400, wait: 45 },
+                            { x: 250, y: 400, wait: 45 }
+                        ]
+                    },
+                    {
+                        x: 650, y: 300,
+                        patrol: [
+                            { x: 650, y: 150, wait: 60 },
+                            { x: 650, y: 450, wait: 60 }
+                        ]
+                    }
+                ],
+                walls: [
+                    { x: 350, y: 250, width: 100, height: 100 }
+                ]
+            }
+        ];
+
+        // ========================================
+        // ゲーム開始
+        // ========================================
+        window.onload = () => {
+            new Game();
+        };
+    </script>
+</body>
+</html>
