@@ -6,7 +6,7 @@ Top-down 2D stealth assassination game built with vanilla HTML/CSS/JavaScript.
 
 ## Play
 
-[Play Online](https://rsasaki0109.github.io/silent_kill/)
+[Play Online](https://rsasaki0109.github.io/action-fighting-games/silent_kill/)
 
 ## Controls
 

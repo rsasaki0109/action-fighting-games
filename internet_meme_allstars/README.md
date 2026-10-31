@@ -6,7 +6,7 @@
 
 ## Play
 
-https://rsasaki0109.github.io/internet_meme_allstars/
+https://rsasaki0109.github.io/action-fighting-games/internet_meme_allstars/
 
 ## Game Modes
 

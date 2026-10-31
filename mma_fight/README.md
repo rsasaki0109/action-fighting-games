@@ -6,7 +6,7 @@
 
 ## Play
 
-https://rsasaki0109.github.io/mma_fight/
+https://rsasaki0109.github.io/action-fighting-games/mma_fight/
 
 ## Controls
 

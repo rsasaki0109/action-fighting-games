@@ -2,6 +2,16 @@
 
 格闘・アクション系ゲームコレクション
 
+## ブラウザで遊ぶ
+
+https://rsasaki0109.github.io/action-fighting-games/
+
+## GitHub Pagesへの公開
+
+`main` へのpushで GitHub Actions がゲームを自動公開します。
+初回は Settings → Pages → Build and deployment → Source を **GitHub Actions** に設定してください。
+自動公開が失敗した場合は、設定後に Actions → Deploy games to GitHub Pages → Run workflow を実行してください。
+
 ## ゲーム一覧
 
 ### internet_meme_allstars
